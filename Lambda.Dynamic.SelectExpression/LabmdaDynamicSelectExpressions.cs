@@ -3,32 +3,28 @@ using System.Reflection;
 
 namespace Lambda.Dynamic.SelectExpression
 {
-    public class LabmdaDynamicSelectExpressions<TEntity, TResponse>
+    public static class LabmdaDynamicSelectExpressions
     {
+        private static readonly Type[] classTypes = new[] { typeof(string), typeof(decimal), typeof(DateTime), typeof(Guid) };
         public record MappingProperties(PropertyInfo TResponseProperty, PropertyInfo TEntityProperty);
 
-        private IEnumerable<MappingProperties> GetSharedProperties(Type TEntityType, Type TResponseType)
+        private static IEnumerable<MappingProperties> GetSharedProperties(Type TEntityType, Type TResponseType)
         {
             return TResponseType.GetProperties()
                 .Where(e => TEntityType.GetProperties().Any(a => a.Name == e.Name))
                 .Select(e =>
                 {
-                    return
-                        new MappingProperties
-                        {
-                            TResponseProperty = TResponseType.GetProperty(e.Name),
-                            TEntityProperty = TEntityType.GetProperty(e.Name)
-                        };
+                    return new MappingProperties(TResponseType.GetProperty(e.Name), TEntityType.GetProperty(e.Name));
                 });
         }
 
-        public Expression<Func<TEntity, TResponse>> GenericSelectExpression()
+        public static Expression<Func<TEntity, TResponse>> GenericSelectExpression<TEntity, TResponse>()
         {
-            var sharedProperties = this.GetSharedProperties(typeof(TEntity), typeof(TResponse));
+            var sharedProperties = GetSharedProperties(typeof(TEntity), typeof(TResponse));
             var sharedParameter = Expression.Parameter(typeof(TEntity), typeof(TEntity).Name);
             var sharedBindings = sharedProperties.Select(sharedProperty =>
             {
-                if (!sharedProperty.TResponseProperty.PropertyType.IsClass)
+                if (!classTypes.Contains(sharedProperty.TResponseProperty.PropertyType) && !sharedProperty.TResponseProperty.PropertyType.IsClass)
                 {
                     //TResponse.Property,TEntity.Propery
                     return Expression.Bind(sharedProperty.TResponseProperty, Expression.Property(sharedParameter, sharedProperty.TEntityProperty));
