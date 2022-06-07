@@ -5,7 +5,7 @@ namespace Lambda.Dynamic.SelectExpression
 {
     public static class LabmdaDynamicSelectExpressions
     {
-        private static readonly Type[] classTypes = new[] { typeof(string), typeof(decimal), typeof(DateTime), typeof(Guid) };
+        private static readonly Type[] classTypes = new[] { typeof(String), typeof(Decimal), typeof(DateTime), typeof(Guid) };
         public record MappingProperties(PropertyInfo TResponseProperty, PropertyInfo TEntityProperty);
 
         private static IEnumerable<MappingProperties> GetSharedProperties(Type TEntityType, Type TResponseType)
@@ -24,7 +24,7 @@ namespace Lambda.Dynamic.SelectExpression
             var sharedParameter = Expression.Parameter(typeof(TEntity), typeof(TEntity).Name);
             var sharedBindings = sharedProperties.Select(sharedProperty =>
             {
-                if (!classTypes.Contains(sharedProperty.TResponseProperty.PropertyType) && !sharedProperty.TResponseProperty.PropertyType.IsClass)
+                if (sharedProperty.TResponseProperty.PropertyType.IsClass == false || classTypes.Contains(sharedProperty.TResponseProperty.PropertyType))
                 {
                     //TResponse.Property,TEntity.Propery
                     return Expression.Bind(sharedProperty.TResponseProperty, Expression.Property(sharedParameter, sharedProperty.TEntityProperty));
