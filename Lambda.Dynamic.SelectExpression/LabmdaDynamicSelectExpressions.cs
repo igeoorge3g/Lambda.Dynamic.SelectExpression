@@ -123,7 +123,7 @@ namespace Lambda.Dynamic.SelectExpression
                     //throw new Exception($"GenericSelectExpression<{tEntityType.Name},{tResponseType.Name}> not Valid!");
                 }
 
-                //var nestedParameter = Expression.Parameter(sharedProperty.TEntityProperty.PropertyType, $"Product.{sharedProperty.TEntityProperty.Name}");
+                //var nestedParameter = Expression.Parameter(sharedProperty.TEntityProperty.PropertyType, $"{sharedParameter.Name}.{sharedProperty.TEntityProperty.Name}");
                 //var nestedObjectBinding = BindNestedObject(tEntitySharedNestedObjectProperty, sharedParameter, parentBindings, tEntitySharedNestedObjectBindings, nestedParameter);
                 continue;
             };
