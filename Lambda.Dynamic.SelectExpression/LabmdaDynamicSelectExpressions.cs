@@ -1,77 +1,64 @@
-﻿using System.Collections;
+﻿using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 
 namespace Lambda.Dynamic.SelectExpression
 {
-    public static class LabmdaDynamicSelectExpressions
+    public static class LambdaDynamicSelectExpressions
     {
-        private static readonly Type[] primitiveTypes = new[] {
-            typeof(Boolean),
-            typeof(Byte),
-            typeof(SByte),
-            typeof(Int16),
-            typeof(UInt16),
-            typeof(Int32),
-            typeof(UInt32),
-            typeof(Int64),
-            typeof(UInt64),
-            typeof(IntPtr),
-            typeof(UIntPtr),
-            typeof(Char),
-            typeof(Double),
-            typeof(Single),
-
-            //EXTRAS
-            typeof(Decimal),
-            typeof(DateTime),
-            typeof(Guid),
-            typeof(String),
-
-            //NULLABLES
-            typeof(Boolean?),
-            typeof(Byte?),
-            typeof(SByte?),
-            typeof(Int16?),
-            typeof(UInt16?),
-            typeof(Int32?),
-            typeof(UInt32?),
-            typeof(Int64?),
-            typeof(UInt64?),
-            typeof(IntPtr?),
-            typeof(UIntPtr?),
-            typeof(Char?),
-            typeof(Double?),
-            typeof(Single?),
-            typeof(Decimal?),
-            typeof(DateTime?),
-            typeof(Guid?)
+        private static readonly HashSet<Type> primitiveTypes = new HashSet<Type>
+        {
+            typeof(bool), typeof(byte), typeof(sbyte), typeof(short), typeof(ushort),
+            typeof(int), typeof(uint), typeof(long), typeof(ulong),
+            typeof(IntPtr), typeof(UIntPtr), typeof(char), typeof(double), typeof(float),
+            typeof(decimal), typeof(DateTime), typeof(Guid), typeof(string),
+            typeof(bool?), typeof(byte?), typeof(sbyte?), typeof(short?), typeof(ushort?),
+            typeof(int?), typeof(uint?), typeof(long?), typeof(ulong?),
+            typeof(IntPtr?), typeof(UIntPtr?), typeof(char?), typeof(double?), typeof(float?),
+            typeof(decimal?), typeof(DateTime?), typeof(Guid?),typeof(Enum)
         };
 
         public record MappingProperty(PropertyInfo TResponseProperty, PropertyInfo TEntityProperty);
 
-        private static IEnumerable<MappingProperty> GetSharedProperties(Type TEntityType, Type TResponseType)
+        private static IEnumerable<MappingProperty> GetSharedProperties(Type entityType, Type responseType)
         {
-            return TResponseType.GetProperties()
-                .Where(e => TEntityType.GetProperties().Any(a => a.Name == e.Name))
+            //return responseType.GetProperties()
+            //    .Where(responseProperty => entityType.GetProperty(responseProperty.Name) != null)
+            //    .Select(responseProperty => new MappingProperty(responseProperty, entityType.GetProperty(responseProperty.Name)!));
+            return responseType.GetProperties()
+                .Where(e => entityType.GetProperties().Any(a => a.Name == e.Name))
                 //.Where(e => primitiveTypes.Contains(e.PropertyType) /*|| typeof(IEnumerable).IsAssignableFrom(e.PropertyType) == false*/)
                 .Select(e =>
                 {
-                    return new MappingProperty(TResponseType.GetProperty(e.Name), TEntityType.GetProperty(e.Name));
+                    return new MappingProperty(responseType.GetProperty(e.Name), entityType.GetProperty(e.Name));
                 });
         }
 
-        private static Expression GenericSelectExpression(Type tEntityType, Type tResponseType)
+        private static Expression GenericSelectExpression(Type entityType, Type responseType)
         {
-            var sharedProperties = GetSharedProperties(tEntityType, tResponseType);
-            var sharedParameter = Expression.Parameter(tEntityType, tEntityType.Name);
-            var sharedBindings = new List<MemberAssignment>();
+            var sharedProperties = GetSharedProperties(entityType, responseType);
+            var entityParameter = Expression.Parameter(entityType, entityType.Name);
+            var sharedBindings = new List<MemberBinding>();
 
             foreach (var sharedProperty in sharedProperties)
             {
                 if (primitiveTypes.Contains(sharedProperty.TResponseProperty.PropertyType))
                 {
-                    sharedBindings.Add(Expression.Bind(sharedProperty.TResponseProperty, Expression.Property(sharedParameter, sharedProperty.TEntityProperty)));
+                    var entityProperty = Expression.Property(entityParameter, sharedProperty.TEntityProperty);
+                    var binding = Expression.Bind(sharedProperty.TResponseProperty, entityProperty);
+                    sharedBindings.Add(binding);
+                    continue;
+                }
+
+                if (sharedProperty.TEntityProperty.PropertyType.IsEnum)
+                {
+                    var entityProperty = Expression.Property(entityParameter, sharedProperty.TEntityProperty);
+                    var convert = Expression.Convert(entityProperty, sharedProperty.TResponseProperty.PropertyType);
+                    var binding = Expression.Bind(sharedProperty.TResponseProperty, convert);
+                    sharedBindings.Add(binding);
                     continue;
                 }
 
@@ -82,33 +69,44 @@ namespace Lambda.Dynamic.SelectExpression
 
                 if (sharedProperty.TEntityProperty.IsNullableReferenceType())
                 {
-                    //BindNullableNestedObject(sharedProperty, sharedParameter, null, sharedBindings);
                     continue;
                 }
 
-                BindNestedObject(sharedProperty, sharedParameter, null, sharedBindings);
-            };
+                var nestedBindings = GetNestedObjectBindings(sharedProperty, entityParameter, sharedBindings);
+                var memberInit = CreateMemberInitExpression(sharedProperty.TResponseProperty.PropertyType, nestedBindings);
+                sharedBindings.Add(Expression.Bind(sharedProperty.TResponseProperty, memberInit));
+            }
 
-            var tResponseObject = Expression.New(tResponseType);
-            var tResponseObjectInit = Expression.MemberInit(tResponseObject, sharedBindings);
-            return Expression.Lambda(tResponseObjectInit, sharedParameter);
+            var responseObject = Expression.New(responseType);
+            var responseObjectInit = Expression.MemberInit(responseObject, sharedBindings);
+            return Expression.Lambda(responseObjectInit, entityParameter);
         }
 
         public static Expression<Func<TEntity, TResponse>> GenericSelectExpression<TEntity, TResponse>()
         {
-            var tEntityType = typeof(TEntity);
-            var tResponseType = typeof(TResponse);
+            var entityType = typeof(TEntity);
+            var responseType = typeof(TResponse);
 
-
-            var sharedProperties = GetSharedProperties(tEntityType, tResponseType);
-            var sharedParameter = Expression.Parameter(tEntityType, tEntityType.Name);
-            var sharedBindings = new List<MemberAssignment>();
+            var sharedProperties = GetSharedProperties(entityType, responseType);
+            var entityParameter = Expression.Parameter(entityType, entityType.Name);
+            var sharedBindings = new List<MemberBinding>();
 
             foreach (var sharedProperty in sharedProperties)
             {
                 if (primitiveTypes.Contains(sharedProperty.TResponseProperty.PropertyType))
                 {
-                    sharedBindings.Add(Expression.Bind(sharedProperty.TResponseProperty, Expression.Property(sharedParameter, sharedProperty.TEntityProperty)));
+                    var entityProperty = Expression.Property(entityParameter, sharedProperty.TEntityProperty);
+                    var binding = Expression.Bind(sharedProperty.TResponseProperty, entityProperty);
+                    sharedBindings.Add(binding);
+                    continue;
+                }
+
+                if (sharedProperty.TEntityProperty.PropertyType.IsEnum)
+                {
+                    var entityProperty = Expression.Property(entityParameter, sharedProperty.TEntityProperty);
+                    var convert = Expression.Convert(entityProperty, sharedProperty.TResponseProperty.PropertyType);
+                    var binding = Expression.Bind(sharedProperty.TResponseProperty, convert);
+                    sharedBindings.Add(binding);
                     continue;
                 }
 
@@ -123,8 +121,8 @@ namespace Lambda.Dynamic.SelectExpression
                         .First(m => m.Name == "Select" && m.GetParameters().Length == 2)
                         .MakeGenericMethod(innerEntityType, innerResponseType);
 
-                    var propertyAccess = Expression.Property(sharedParameter, sharedProperty.TEntityProperty);
-                    var selectCall = Expression.Call(null, selectMethod, propertyAccess, innerLambda);
+                    var propertyAccess = Expression.Property(entityParameter, sharedProperty.TEntityProperty);
+                    var selectCall = Expression.Call(selectMethod, propertyAccess, innerLambda);
 
                     sharedBindings.Add(Expression.Bind(sharedProperty.TResponseProperty, Expression.Convert(selectCall, enumerableType)));
                     continue;
@@ -132,49 +130,60 @@ namespace Lambda.Dynamic.SelectExpression
 
                 if (sharedProperty.TEntityProperty.IsNullableReferenceType())
                 {
-                    BindNullableNestedObject(sharedProperty, sharedParameter, null, sharedBindings);
                     continue;
                 }
-                BindNestedObject(sharedProperty, sharedParameter, null, sharedBindings);
-            };
 
-            var tResponseObject = Expression.New(typeof(TResponse));
-            var tResponseObjectInit = Expression.MemberInit(tResponseObject, sharedBindings);
-            return Expression.Lambda<Func<TEntity, TResponse>>(tResponseObjectInit, sharedParameter);
+                var nestedBindings = GetNestedObjectBindings(sharedProperty, entityParameter, sharedBindings);
+                var memberInit = CreateMemberInitExpression(sharedProperty.TResponseProperty.PropertyType, nestedBindings);
+                sharedBindings.Add(Expression.Bind(sharedProperty.TResponseProperty, memberInit));
+            }
+
+            var responseObject = Expression.New(responseType);
+            var responseObjectInit = Expression.MemberInit(responseObject, sharedBindings);
+            return Expression.Lambda<Func<TEntity, TResponse>>(responseObjectInit, entityParameter);
         }
 
-        private static MemberInitExpression CreateNestedMemberInitExpression(MappingProperty sharedProperty, ParameterExpression sharedParameter, IEnumerable<MemberAssignment> tEntitySharedNestedObjectBindings)
+        private static List<MemberBinding> GetNestedObjectBindings(MappingProperty sharedProperty, ParameterExpression entityParameter, List<MemberBinding> parentBindings)
         {
-            NewExpression tResponseNestedObject = Expression.New(sharedProperty.TResponseProperty.PropertyType);
-            MemberInitExpression tResponseNestedObjectInit = Expression.MemberInit(tResponseNestedObject, tEntitySharedNestedObjectBindings);
-            return tResponseNestedObjectInit;
-        }
-
-        private static IEnumerable<MemberAssignment> GetNestedObjectBindings(MappingProperty sharedProperty, ParameterExpression sharedParameter, List<MemberAssignment> parentBindings)
-        {
-            MemberExpression tEntityNestedObjectExpression = Expression.Property(sharedParameter, sharedProperty.TEntityProperty);
+            var entityNestedObjectExpression = Expression.Property(entityParameter, sharedProperty.TEntityProperty);
             var sharedNestedObjectProperties = GetSharedProperties(sharedProperty.TEntityProperty.PropertyType, sharedProperty.TResponseProperty.PropertyType);
-            var tEntitySharedNestedObjectBindings = new List<MemberAssignment>();
+            var entitySharedNestedObjectBindings = new List<MemberBinding>();
 
-            foreach (var tEntitySharedNestedObjectProperty in sharedNestedObjectProperties)
+            foreach (var entitySharedNestedObjectProperty in sharedNestedObjectProperties)
             {
-                if (primitiveTypes.Contains(tEntitySharedNestedObjectProperty.TResponseProperty.PropertyType))
+                if (primitiveTypes.Contains(entitySharedNestedObjectProperty.TResponseProperty.PropertyType))
                 {
-                    MemberExpression tEntityNestedObjectProperty = Expression.Property(tEntityNestedObjectExpression, tEntitySharedNestedObjectProperty.TEntityProperty);
-                    tEntitySharedNestedObjectBindings.Add(Expression.Bind(tEntitySharedNestedObjectProperty.TResponseProperty, tEntityNestedObjectProperty));
+                    var entityNestedObjectProperty = Expression.Property(entityNestedObjectExpression, entitySharedNestedObjectProperty.TEntityProperty);
+                    var binding = Expression.Bind(entitySharedNestedObjectProperty.TResponseProperty, entityNestedObjectProperty);
+                    entitySharedNestedObjectBindings.Add(binding);
                     continue;
                 }
 
+                if (sharedProperty.TEntityProperty.PropertyType.IsEnum)
+                {
+                    var entityProperty = Expression.Property(entityParameter, sharedProperty.TEntityProperty);
+                    var convert = Expression.Convert(entityProperty, sharedProperty.TResponseProperty.PropertyType);
+                    var binding = Expression.Bind(sharedProperty.TResponseProperty, convert);
+                    entitySharedNestedObjectBindings.Add(binding);
+                    continue;
+                }
                 if (typeof(IEnumerable).IsAssignableFrom(sharedProperty.TEntityProperty.PropertyType))
                 {
-                    //throw new Exception($"GenericSelectExpression<{tEntityType.Name},{tResponseType.Name}> not Valid!");
+                    continue;
                 }
 
-                //var nestedParameter = Expression.Parameter(sharedProperty.TEntityProperty.PropertyType, $"{sharedParameter.Name}.{sharedProperty.TEntityProperty.Name}");
-                //var nestedObjectBinding = BindNestedObject(tEntitySharedNestedObjectProperty, sharedParameter, parentBindings, tEntitySharedNestedObjectBindings, nestedParameter);
-                continue;
-            };
-            return tEntitySharedNestedObjectBindings;
+                var nestedBindings = GetNestedObjectBindings(entitySharedNestedObjectProperty, entityParameter, entitySharedNestedObjectBindings);
+                var memberInit = CreateMemberInitExpression(entitySharedNestedObjectProperty.TResponseProperty.PropertyType, nestedBindings);
+                entitySharedNestedObjectBindings.Add(Expression.Bind(entitySharedNestedObjectProperty.TResponseProperty, memberInit));
+            }
+
+            return entitySharedNestedObjectBindings;
+        }
+
+        private static MemberInitExpression CreateMemberInitExpression(Type objectType, IEnumerable<MemberBinding> bindings)
+        {
+            var newObject = Expression.New(objectType);
+            return Expression.MemberInit(newObject, bindings);
         }
 
         public static bool IsNullableReferenceType(this PropertyInfo property)
@@ -185,95 +194,5 @@ namespace Lambda.Dynamic.SelectExpression
             // Find the NullableAttribute
             return customAttributes.Any(a => a.AttributeType.Name == "NullableAttribute");
         }
-
-        private static MemberAssignment BindNullableNestedObject(MappingProperty nestedObjectProperty, ParameterExpression sharedParameter, List<MemberAssignment> parentObjectBindings, List<MemberAssignment>? nestedObjectBindings = null, ParameterExpression? nestedObjectParameter = null)
-        {
-            IEnumerable<MemberAssignment> nestedObjectBindings2 = GetNestedObjectBindings(nestedObjectProperty, nestedObjectParameter ?? sharedParameter, nestedObjectBindings ?? parentObjectBindings);
-
-            // Create the nested property access expression
-            Expression nestedPropertyAccess = Expression.Property(nestedObjectParameter ?? sharedParameter, nestedObjectProperty.TEntityProperty);
-
-            // Create a condition that checks if the nested property is null
-            Expression nullCheck = Expression.NotEqual(nestedPropertyAccess, Expression.Constant(null, nestedObjectProperty.TEntityProperty.PropertyType));
-
-            // Create the MemberInit expression for the nested object
-            MemberInitExpression memberInitExpression = CreateNestedMemberInitExpression(nestedObjectProperty, nestedObjectParameter ?? sharedParameter, nestedObjectBindings2);
-
-            // Create a condition expression that returns the MemberInit expression if the nested object is not null, otherwise null
-            Expression conditionExpression = Expression.Condition(nullCheck, memberInitExpression, Expression.Constant(null, nestedObjectProperty.TResponseProperty.PropertyType));
-
-            // Create the MemberAssignment for the nested object property
-            MemberAssignment memberAssignment = Expression.Bind(nestedObjectProperty.TResponseProperty, conditionExpression);
-
-            // Add the MemberAssignment to the bindings
-            (nestedObjectBindings ?? parentObjectBindings)!.Add(memberAssignment);
-
-            return memberAssignment;
-        }
-
-        private static MemberAssignment BindNestedObject(MappingProperty nestedObjectProperty, ParameterExpression sharedParameter, List<MemberAssignment> parentObjectBindings, List<MemberAssignment>? nestedObjectBindings = null, ParameterExpression? nestedObjectParameter = null)
-        {
-            var nestedObjectBingings = GetNestedObjectBindings(nestedObjectProperty, nestedObjectParameter ?? sharedParameter, nestedObjectBindings ?? parentObjectBindings);
-            MemberInitExpression tResponseNestedObjectInit = CreateNestedMemberInitExpression(nestedObjectProperty, nestedObjectParameter ?? sharedParameter, nestedObjectBingings);
-            (nestedObjectBindings ?? parentObjectBindings).Add(Expression.Bind(nestedObjectProperty.TResponseProperty, tResponseNestedObjectInit));
-            return Expression.Bind(nestedObjectProperty.TResponseProperty, tResponseNestedObjectInit);
-        }
-
-        private static LambdaExpression CreateNestedLambdaExpression(MemberInitExpression tResponseNestedObjectInit, ParameterExpression correspondantParameter)
-        {
-            return Expression.Lambda(tResponseNestedObjectInit, correspondantParameter);
-        }
     }
-
-    #region Project().To<TType>()
-
-    public static class QueryableExtensions
-    {
-        public static IProjectionExpression Project<TSource>(
-            this IQueryable<TSource> source)
-        {
-            return new ProjectionExpression<TSource>(source);
-        }
-    }
-    public interface IProjectionExpression
-    {
-        IQueryable<TResult> To<TResult>();
-    }
-    public class ProjectionExpression<TSource> : IProjectionExpression
-    {
-        private readonly IQueryable<TSource> _source;
-
-        public ProjectionExpression(IQueryable<TSource> source)
-        {
-            _source = source;
-        }
-
-        public IQueryable<TResult> To<TResult>()
-        {
-            Expression<Func<TSource, TResult>> expr = BuildExpression<TResult>();
-
-            return _source.Select(expr);
-        }
-
-        public static Expression<Func<TSource, TResult>> BuildExpression<TResult>()
-        {
-            var sourceMembers = typeof(TSource).GetProperties();
-            var destinationMembers = typeof(TResult).GetProperties();
-
-            var name = "src";
-
-            var parameterExpression = Expression.Parameter(typeof(TSource), name);
-            var expressions = destinationMembers.ToArray();
-            var bindings = expressions.Select(dest =>
-            {
-                var sourcemem = sourceMembers.First(pi => pi.Name == dest.Name);
-                var prop = Expression.Property(parameterExpression, sourcemem);
-                return Expression.Bind(dest, prop);
-            });
-            var mapping = Expression.MemberInit(Expression.New(typeof(TResult)), bindings);
-            return Expression.Lambda<Func<TSource, TResult>>(mapping, parameterExpression);
-        }
-    }
-
-    #endregion
 }
