@@ -7,6 +7,7 @@
     <Title>Lambda.Dynamic.SelectExpression</Title>
     <Description>Lambda.Dynamic.SelectExpression</Description>
     <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
+	  <Version>0.0.2</Version>
   </PropertyGroup>
 
 </Project>
