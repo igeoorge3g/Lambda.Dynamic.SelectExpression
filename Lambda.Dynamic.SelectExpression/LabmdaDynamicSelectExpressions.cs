@@ -54,11 +54,44 @@ namespace Lambda.Dynamic.SelectExpression
         {
             return TResponseType.GetProperties()
                 .Where(e => TEntityType.GetProperties().Any(a => a.Name == e.Name))
-                .Where(e => primitiveTypes.Contains(e.PropertyType) || typeof(IEnumerable).IsAssignableFrom(e.PropertyType) == false)
+                //.Where(e => primitiveTypes.Contains(e.PropertyType) /*|| typeof(IEnumerable).IsAssignableFrom(e.PropertyType) == false*/)
                 .Select(e =>
                 {
                     return new MappingProperty(TResponseType.GetProperty(e.Name), TEntityType.GetProperty(e.Name));
                 });
+        }
+
+        private static Expression GenericSelectExpression(Type tEntityType, Type tResponseType)
+        {
+            var sharedProperties = GetSharedProperties(tEntityType, tResponseType);
+            var sharedParameter = Expression.Parameter(tEntityType, tEntityType.Name);
+            var sharedBindings = new List<MemberAssignment>();
+
+            foreach (var sharedProperty in sharedProperties)
+            {
+                if (primitiveTypes.Contains(sharedProperty.TResponseProperty.PropertyType))
+                {
+                    sharedBindings.Add(Expression.Bind(sharedProperty.TResponseProperty, Expression.Property(sharedParameter, sharedProperty.TEntityProperty)));
+                    continue;
+                }
+
+                if (typeof(IEnumerable).IsAssignableFrom(sharedProperty.TEntityProperty.PropertyType))
+                {
+                    continue;
+                }
+
+                if (sharedProperty.TEntityProperty.IsNullableReferenceType())
+                {
+                    //BindNullableNestedObject(sharedProperty, sharedParameter, null, sharedBindings);
+                    continue;
+                }
+
+                BindNestedObject(sharedProperty, sharedParameter, null, sharedBindings);
+            };
+
+            var tResponseObject = Expression.New(tResponseType);
+            var tResponseObjectInit = Expression.MemberInit(tResponseObject, sharedBindings);
+            return Expression.Lambda(tResponseObjectInit, sharedParameter);
         }
 
         public static Expression<Func<TEntity, TResponse>> GenericSelectExpression<TEntity, TResponse>()
@@ -81,12 +114,27 @@ namespace Lambda.Dynamic.SelectExpression
 
                 if (typeof(IEnumerable).IsAssignableFrom(sharedProperty.TEntityProperty.PropertyType))
                 {
-                    throw new Exception($"GenericSelectExpression<{tEntityType.Name},{tResponseType.Name}> not Valid!");
+                    var innerEntityType = sharedProperty.TEntityProperty.PropertyType.GetGenericArguments()[0];
+                    var innerResponseType = sharedProperty.TResponseProperty.PropertyType.GetGenericArguments()[0];
+                    var enumerableType = typeof(IEnumerable<>).MakeGenericType(innerResponseType);
+                    var innerParameter = Expression.Parameter(innerEntityType, "inner");
+                    var innerLambda = GenericSelectExpression(innerEntityType, innerResponseType);
+                    var selectMethod = typeof(Enumerable).GetMethods()
+                        .First(m => m.Name == "Select" && m.GetParameters().Length == 2)
+                        .MakeGenericMethod(innerEntityType, innerResponseType);
+
+                    var propertyAccess = Expression.Property(sharedParameter, sharedProperty.TEntityProperty);
+                    var selectCall = Expression.Call(null, selectMethod, propertyAccess, innerLambda);
+
+                    sharedBindings.Add(Expression.Bind(sharedProperty.TResponseProperty, Expression.Convert(selectCall, enumerableType)));
+                    continue;
                 }
 
-                //var nestedObjectBingings = GetNestedObjectBindings(sharedProperty, sharedParameter);
-                //MemberInitExpression tResponseNestedObjectInit = CreateNestedMemberInitExpression(sharedProperty, nestedObjectBingings);
-                //return Expression.Bind(sharedProperty.TResponseProperty, tResponseNestedObjectInit);
+                if (sharedProperty.TEntityProperty.IsNullableReferenceType())
+                {
+                    BindNullableNestedObject(sharedProperty, sharedParameter, null, sharedBindings);
+                    continue;
+                }
                 BindNestedObject(sharedProperty, sharedParameter, null, sharedBindings);
             };
 
@@ -127,6 +175,40 @@ namespace Lambda.Dynamic.SelectExpression
                 continue;
             };
             return tEntitySharedNestedObjectBindings;
+        }
+
+        public static bool IsNullableReferenceType(this PropertyInfo property)
+        {
+            // Get the custom attributes of the property
+            var customAttributes = property.GetCustomAttributesData();
+
+            // Find the NullableAttribute
+            return customAttributes.Any(a => a.AttributeType.Name == "NullableAttribute");
+        }
+
+        private static MemberAssignment BindNullableNestedObject(MappingProperty nestedObjectProperty, ParameterExpression sharedParameter, List<MemberAssignment> parentObjectBindings, List<MemberAssignment>? nestedObjectBindings = null, ParameterExpression? nestedObjectParameter = null)
+        {
+            IEnumerable<MemberAssignment> nestedObjectBindings2 = GetNestedObjectBindings(nestedObjectProperty, nestedObjectParameter ?? sharedParameter, nestedObjectBindings ?? parentObjectBindings);
+
+            // Create the nested property access expression
+            Expression nestedPropertyAccess = Expression.Property(nestedObjectParameter ?? sharedParameter, nestedObjectProperty.TEntityProperty);
+
+            // Create a condition that checks if the nested property is null
+            Expression nullCheck = Expression.NotEqual(nestedPropertyAccess, Expression.Constant(null, nestedObjectProperty.TEntityProperty.PropertyType));
+
+            // Create the MemberInit expression for the nested object
+            MemberInitExpression memberInitExpression = CreateNestedMemberInitExpression(nestedObjectProperty, nestedObjectParameter ?? sharedParameter, nestedObjectBindings2);
+
+            // Create a condition expression that returns the MemberInit expression if the nested object is not null, otherwise null
+            Expression conditionExpression = Expression.Condition(nullCheck, memberInitExpression, Expression.Constant(null, nestedObjectProperty.TResponseProperty.PropertyType));
+
+            // Create the MemberAssignment for the nested object property
+            MemberAssignment memberAssignment = Expression.Bind(nestedObjectProperty.TResponseProperty, conditionExpression);
+
+            // Add the MemberAssignment to the bindings
+            (nestedObjectBindings ?? parentObjectBindings)!.Add(memberAssignment);
+
+            return memberAssignment;
         }
 
         private static MemberAssignment BindNestedObject(MappingProperty nestedObjectProperty, ParameterExpression sharedParameter, List<MemberAssignment> parentObjectBindings, List<MemberAssignment>? nestedObjectBindings = null, ParameterExpression? nestedObjectParameter = null)
