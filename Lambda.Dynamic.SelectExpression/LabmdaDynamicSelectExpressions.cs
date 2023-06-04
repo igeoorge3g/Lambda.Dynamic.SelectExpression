@@ -72,7 +72,7 @@ namespace Lambda.Dynamic.SelectExpression
                     continue;
                 }
 
-                var nestedBindings = GetNestedObjectBindings(sharedProperty, entityParameter, sharedBindings);
+                var nestedBindings = GetNestedObjectBindings(sharedProperty, entityParameter);
                 var memberInit = CreateMemberInitExpression(sharedProperty.TResponseProperty.PropertyType, nestedBindings);
                 sharedBindings.Add(Expression.Bind(sharedProperty.TResponseProperty, memberInit));
             }
@@ -133,7 +133,7 @@ namespace Lambda.Dynamic.SelectExpression
                     continue;
                 }
 
-                var nestedBindings = GetNestedObjectBindings(sharedProperty, entityParameter, sharedBindings);
+                var nestedBindings = GetNestedObjectBindings(sharedProperty, entityParameter);
                 var memberInit = CreateMemberInitExpression(sharedProperty.TResponseProperty.PropertyType, nestedBindings);
                 sharedBindings.Add(Expression.Bind(sharedProperty.TResponseProperty, memberInit));
             }
@@ -143,7 +143,7 @@ namespace Lambda.Dynamic.SelectExpression
             return Expression.Lambda<Func<TEntity, TResponse>>(responseObjectInit, entityParameter);
         }
 
-        private static List<MemberBinding> GetNestedObjectBindings(MappingProperty sharedProperty, ParameterExpression entityParameter, List<MemberBinding> parentBindings)
+        private static List<MemberBinding> GetNestedObjectBindings(MappingProperty sharedProperty, ParameterExpression entityParameter)
         {
             var entityNestedObjectExpression = Expression.Property(entityParameter, sharedProperty.TEntityProperty);
             var sharedNestedObjectProperties = GetSharedProperties(sharedProperty.TEntityProperty.PropertyType, sharedProperty.TResponseProperty.PropertyType);
@@ -172,7 +172,7 @@ namespace Lambda.Dynamic.SelectExpression
                     continue;
                 }
 
-                var nestedBindings = GetNestedObjectBindings(entitySharedNestedObjectProperty, entityParameter, entitySharedNestedObjectBindings);
+                var nestedBindings = GetNestedObjectBindings(entitySharedNestedObjectProperty, entityParameter);
                 var memberInit = CreateMemberInitExpression(entitySharedNestedObjectProperty.TResponseProperty.PropertyType, nestedBindings);
                 entitySharedNestedObjectBindings.Add(Expression.Bind(entitySharedNestedObjectProperty.TResponseProperty, memberInit));
             }
