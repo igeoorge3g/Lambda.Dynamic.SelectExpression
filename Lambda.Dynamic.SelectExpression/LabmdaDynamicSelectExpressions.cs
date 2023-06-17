@@ -217,6 +217,6 @@ namespace Lambda.Dynamic.SelectExpression
             nestedObjectBindings.Add(memberAssignment);
         }
 
-        private static bool IsNullableReferenceType(this PropertyInfo property) => property.GetCustomAttributesData().Any(a => a.AttributeType.Name == "NullableAttribute");
+        private static bool IsNullableReferenceType(this PropertyInfo property) => property.PropertyType.GetCustomAttributesData().Any(a => a.AttributeType.Name == "NullableAttribute");
     }
 }
