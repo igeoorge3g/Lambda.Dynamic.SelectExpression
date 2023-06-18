@@ -18,6 +18,26 @@ namespace Lambda.Dynamic.SelectExpression
             typeof(IntPtr?), typeof(UIntPtr?), typeof(char?), typeof(double?), typeof(float?),
             typeof(decimal?), typeof(DateTime?), typeof(Guid?)
         };
+        private record MappingProperty(PropertyInfo TResponseProperty, PropertyInfo TEntityProperty);
+
+        private static IEnumerable<MappingProperty> GetSharedProperties(Type TEntityType, Type TResponseType)
+        {
+            var key = (TEntityType, TResponseType);
+
+            if (!sharedPropertiesCache.ContainsKey(key))
+            {
+                var properties = TResponseType.GetProperties()
+                    .Where(e => TEntityType.GetProperties().Any(a => a.Name == e.Name))
+                    .Select(e =>
+                    {
+                        return new MappingProperty(TResponseType.GetProperty(e.Name), TEntityType.GetProperty(e.Name));
+                    });
+
+                sharedPropertiesCache[key] = properties;
+            }
+
+            return sharedPropertiesCache[key];
+        }
 
         public static Expression<Func<TEntity, TResponse>> GenericSelectExpression<TEntity, TResponse>()
         {
@@ -124,27 +144,6 @@ namespace Lambda.Dynamic.SelectExpression
             return Expression.Lambda(tResponseObjectInit, sharedParameter);
         }
 
-        private record MappingProperty(PropertyInfo TResponseProperty, PropertyInfo TEntityProperty);
-
-        private static IEnumerable<MappingProperty> GetSharedProperties(Type TEntityType, Type TResponseType)
-        {
-            var key = (TEntityType, TResponseType);
-
-            if (!sharedPropertiesCache.ContainsKey(key))
-            {
-                var properties = TResponseType.GetProperties()
-                    .Where(e => TEntityType.GetProperties().Any(a => a.Name == e.Name))
-                    .Select(e =>
-                    {
-                        return new MappingProperty(TResponseType.GetProperty(e.Name), TEntityType.GetProperty(e.Name));
-                    });
-
-                sharedPropertiesCache[key] = properties;
-            }
-
-            return sharedPropertiesCache[key];
-        }
-
         private static MemberInitExpression CreateNestedMemberInitExpression(MappingProperty sharedProperty, IEnumerable<MemberAssignment> tEntitySharedNestedObjectBindings)
         {
             NewExpression tResponseNestedObject = Expression.New(sharedProperty.TResponseProperty.PropertyType);
@@ -177,6 +176,7 @@ namespace Lambda.Dynamic.SelectExpression
                 if (typeof(IEnumerable).IsAssignableFrom(sharedProperty.TEntityProperty.PropertyType))
                 {
                     //throw new Exception($"GenericSelectExpression<{tEntityType.Name},{tResponseType.Name}> not Valid!");
+                    continue;
                 }
 
                 //var nestedParameter = Expression.Parameter(sharedProperty.TEntityProperty.PropertyType, $"{sharedParameter.Name}.{sharedProperty.TEntityProperty.Name}");
