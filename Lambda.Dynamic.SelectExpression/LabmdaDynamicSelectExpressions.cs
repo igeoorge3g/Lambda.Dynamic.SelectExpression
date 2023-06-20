@@ -18,8 +18,6 @@ namespace Lambda.Dynamic.SelectExpression
             typeof(IntPtr?), typeof(UIntPtr?), typeof(char?), typeof(double?), typeof(float?),
             typeof(decimal?), typeof(DateTime?), typeof(Guid?)
         };
-        private record MappingProperty(PropertyInfo TResponseProperty, PropertyInfo TEntityProperty);
-
         private static IEnumerable<MappingProperty> GetSharedProperties(Type TEntityType, Type TResponseType)
         {
             var key = (TEntityType, TResponseType);
