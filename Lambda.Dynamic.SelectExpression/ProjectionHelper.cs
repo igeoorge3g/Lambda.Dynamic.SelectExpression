@@ -1,4 +1,5 @@
-﻿using System.Collections;
+﻿using Lambda.Dynamic.SelectExpression.Attributes;
+using System.Collections;
 using System.Linq.Expressions;
 using System.Reflection;
 
@@ -23,15 +24,20 @@ namespace Lambda.Dynamic.SelectExpression
         private static IEnumerable<MappingProperty> GetSharedProperties(Type TEntityType, Type TResponseType)
         {
             var key = (TEntityType, TResponseType);
-
+            var TEntityProperties = TEntityType.GetProperties();
+            var TResponseProperties = TEntityType.GetProperties();
             if (!sharedPropertiesCache.TryGetValue(key, out var properties))
             {
-                properties = TResponseType.GetProperties()
-                    .Where(e => TEntityType.GetProperties().Any(a => a.Name == e.Name))
+                properties = TResponseProperties
+                    .Where(e => TEntityProperties.Any(a => a.Name == e.Name))
                     .Select(e =>
                     {
                         return new MappingProperty(TResponseType.GetProperty(e.Name)!, TEntityType.GetProperty(e.Name)!);
-                    });
+                    }).Union(TResponseProperties
+                    .Where(e => e.HasAttribute<MappingAttribute>()).Select(e =>
+                    {
+                        return new MappingProperty(e, TEntityType.GetProperty(e.GetCustomAttribute<MappingAttribute>()!.RelatedObject)!, true);
+                    }));
 
                 sharedPropertiesCache[key] = properties;
             }
@@ -69,7 +75,17 @@ namespace Lambda.Dynamic.SelectExpression
 
             foreach (var sharedProperty in properties)
             {
+
                 var sourceProperty = Expression.Property(sourceParameter, sharedProperty.TEntityProperty.Name);
+
+                if (sharedProperty.IsMapping)
+                {
+                    var nestedChildProperty = sharedProperty.TEntityProperty.PropertyType.GetProperty(sharedProperty.TResponseProperty.Name);
+                    var nestedChildPropertyAccess = Expression.Property(sourceProperty, nestedChildProperty);
+                    var memberAssignment = Expression.Bind(sharedProperty.TResponseProperty, nestedChildPropertyAccess);
+                    bindings.Add(memberAssignment);
+                    continue;
+                }
 
                 if (primitiveTypes.Contains(sharedProperty.TResponseProperty.PropertyType))
                 {
@@ -138,5 +154,10 @@ namespace Lambda.Dynamic.SelectExpression
         }
 
         private static bool IsNullableReferenceType(this PropertyInfo property) => property.PropertyType.GetCustomAttributesData().Any(a => a.AttributeType.Name == "NullableAttribute");
+        private static bool HasAttribute<AttributeType>(this PropertyInfo property)
+        {
+            return property.GetCustomAttributes(typeof(AttributeType), true).Length > 0;
+        }
+
     }
 }

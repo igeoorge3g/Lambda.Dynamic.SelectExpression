@@ -2,5 +2,5 @@
 
 namespace Lambda.Dynamic.SelectExpression
 {
-    internal record MappingProperty(PropertyInfo TResponseProperty, PropertyInfo TEntityProperty);
+    internal record MappingProperty(PropertyInfo TResponseProperty, PropertyInfo TEntityProperty, bool IsMapping = false);
 }
