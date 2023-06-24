@@ -7,6 +7,7 @@ namespace Lambda.Dynamic.SelectExpression
 {
     public static class ProjectionHelper
     {
+        private static readonly MethodInfo selectMethod = typeof(Enumerable).GetMethods().First(m => m.Name == "Select" && m.GetParameters().Length == 2);
         private static readonly Dictionary<(Type, Type), IEnumerable<MappingProperty>> sharedPropertiesCache = new();
         private static readonly HashSet<Type> primitiveTypes = new HashSet<Type>(
             new[]
@@ -50,7 +51,7 @@ namespace Lambda.Dynamic.SelectExpression
 
         public static Expression<Func<TSource, TResult>> CreateProjection<TSource, TResult>(bool loadChildren = false)
         {
-            
+
             var sourceType = typeof(TSource);
             var resultType = typeof(TResult);
             //Debug.WriteLine($"CreateProjection<{sourceType.Name}, {resultType.Name}>");
@@ -116,14 +117,12 @@ namespace Lambda.Dynamic.SelectExpression
                     var innerEntityType = sharedProperty.TEntityProperty.PropertyType.GetGenericArguments()[0];
                     var innerResponseType = sharedProperty.TResponseProperty.PropertyType.GetGenericArguments()[0];
                     var enumerableType = typeof(IEnumerable<>).MakeGenericType(innerResponseType);
-                    var innerParameter = Expression.Parameter(innerEntityType, "inner");
+                    //var innerParameter = Expression.Parameter(innerEntityType, "inner");
                     var innerLambda = CreateProjection(innerEntityType, innerResponseType, loadChildren);
-                    var selectMethod = typeof(Enumerable).GetMethods()
-                        .First(m => m.Name == "Select" && m.GetParameters().Length == 2)
-                        .MakeGenericMethod(innerEntityType, innerResponseType);
 
+                    var selectGenericMethod = selectMethod.MakeGenericMethod(innerEntityType, innerResponseType);
                     var propertyAccess = Expression.Property(sourceParameter, sharedProperty.TEntityProperty);
-                    var selectCall = Expression.Call(null, selectMethod, propertyAccess, innerLambda);
+                    var selectCall = Expression.Call(null, selectGenericMethod, propertyAccess, innerLambda);
                     var convertExpression = Expression.Convert(selectCall, enumerableType);
                     var memberAssignment = Expression.Bind(sharedProperty.TResponseProperty, convertExpression);
                     bindings.Add(memberAssignment);
