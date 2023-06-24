@@ -24,17 +24,20 @@ namespace Lambda.Dynamic.SelectExpression
         private static IEnumerable<MappingProperty> GetSharedProperties(Type TEntityType, Type TResponseType)
         {
             var key = (TEntityType, TResponseType);
-            var TEntityProperties = TEntityType.GetProperties();
-            var TResponseProperties = TEntityType.GetProperties();
+
             if (!sharedPropertiesCache.TryGetValue(key, out var properties))
             {
+                var TEntityProperties = TEntityType.GetProperties();
+                var TResponseProperties = TResponseType.GetProperties();
+
                 properties = TResponseProperties
                     .Where(e => TEntityProperties.Any(a => a.Name == e.Name))
                     .Select(e =>
                     {
-                        return new MappingProperty(TResponseType.GetProperty(e.Name)!, TEntityType.GetProperty(e.Name)!);
+                        return new MappingProperty(e, TEntityType.GetProperty(e.Name)!);
                     }).Union(TResponseProperties
-                    .Where(e => e.HasAttribute<MappingAttribute>()).Select(e =>
+                    .Where(e => e.HasAttribute<MappingAttribute>())
+                    .Select(e =>
                     {
                         return new MappingProperty(e, TEntityType.GetProperty(e.GetCustomAttribute<MappingAttribute>()!.RelatedObject)!, true);
                     }));
@@ -45,43 +48,43 @@ namespace Lambda.Dynamic.SelectExpression
             return properties;
         }
 
-        public static Expression<Func<TSource, TResult>> CreateProjection<TSource, TResult>()
+        public static Expression<Func<TSource, TResult>> CreateProjection<TSource, TResult>(bool LoadChildren = false)
         {
             var sourceType = typeof(TSource);
             var resultType = typeof(TResult);
             var sourceParameter = Expression.Parameter(sourceType, "source");
 
             var resultProperties = GetSharedProperties(sourceType, resultType);
-            var bindings = CreateMemberBindings(sourceParameter, resultProperties);
+            var bindings = CreateMemberBindings(sourceParameter, resultProperties, LoadChildren);
 
             var memberInit = Expression.MemberInit(Expression.New(resultType), bindings);
             return Expression.Lambda<Func<TSource, TResult>>(memberInit, sourceParameter);
         }
 
-        private static Expression CreateProjection(Type TSource, Type TResult)
+        private static Expression CreateProjection(Type TSource, Type TResult, bool LoadChildren = false)
         {
             var sourceParameter = Expression.Parameter(TSource, "source");
 
             var resultProperties = GetSharedProperties(TSource, TResult);
-            var bindings = CreateMemberBindings(sourceParameter, resultProperties);
+            var bindings = CreateMemberBindings(sourceParameter, resultProperties, LoadChildren, 3);
 
             var memberInit = Expression.MemberInit(Expression.New(TResult), bindings);
             return Expression.Lambda(memberInit, sourceParameter);
         }
 
-        private static MemberBinding[] CreateMemberBindings(Expression sourceParameter, IEnumerable<MappingProperty> properties, int currentLevel = 1)
+        private static MemberBinding[] CreateMemberBindings(Expression sourceParameter, IEnumerable<MappingProperty> properties, bool LoadChildren, int CurrentLevel = 1)
         {
             var bindings = new List<MemberBinding>();
 
             foreach (var sharedProperty in properties)
             {
 
-                var sourceProperty = Expression.Property(sourceParameter, sharedProperty.TEntityProperty.Name);
 
                 if (sharedProperty.IsMapping)
                 {
+                    var nestedSourceProperty = Expression.Property(sourceParameter, sharedProperty.TEntityProperty.Name);
                     var nestedChildProperty = sharedProperty.TEntityProperty.PropertyType.GetProperty(sharedProperty.TResponseProperty.Name);
-                    var nestedChildPropertyAccess = Expression.Property(sourceProperty, nestedChildProperty);
+                    var nestedChildPropertyAccess = Expression.Property(nestedSourceProperty, nestedChildProperty);
                     var memberAssignment = Expression.Bind(sharedProperty.TResponseProperty, nestedChildPropertyAccess);
                     bindings.Add(memberAssignment);
                     continue;
@@ -89,6 +92,7 @@ namespace Lambda.Dynamic.SelectExpression
 
                 if (primitiveTypes.Contains(sharedProperty.TResponseProperty.PropertyType))
                 {
+                    var sourceProperty = Expression.Property(sourceParameter, sharedProperty.TEntityProperty.Name);
                     var memberAssignment = Expression.Bind(sharedProperty.TResponseProperty, sourceProperty);
                     bindings.Add(memberAssignment);
                     continue;
@@ -104,13 +108,13 @@ namespace Lambda.Dynamic.SelectExpression
                 }
 
 
-                if (typeof(IEnumerable).IsAssignableFrom(sharedProperty.TEntityProperty.PropertyType) && currentLevel == 1)
+                if (typeof(IEnumerable).IsAssignableFrom(sharedProperty.TEntityProperty.PropertyType) && CurrentLevel == 1)
                 {
                     var innerEntityType = sharedProperty.TEntityProperty.PropertyType.GetGenericArguments()[0];
                     var innerResponseType = sharedProperty.TResponseProperty.PropertyType.GetGenericArguments()[0];
                     var enumerableType = typeof(IEnumerable<>).MakeGenericType(innerResponseType);
                     var innerParameter = Expression.Parameter(innerEntityType, "inner");
-                    var innerLambda = CreateProjection(innerEntityType, innerResponseType);
+                    var innerLambda = CreateProjection(innerEntityType, innerResponseType, LoadChildren);
                     var selectMethod = typeof(Enumerable).GetMethods()
                         .First(m => m.Name == "Select" && m.GetParameters().Length == 2)
                         .MakeGenericMethod(innerEntityType, innerResponseType);
@@ -123,13 +127,14 @@ namespace Lambda.Dynamic.SelectExpression
                     continue;
                 }
 
-                if (currentLevel > 2)
+                if (CurrentLevel > 2 && LoadChildren == false)
                 {
                     continue;
                 }
 
+                var childSourceProperty = Expression.Property(sourceParameter, sharedProperty.TEntityProperty.Name);
                 var childProperties = GetSharedProperties(sharedProperty.TEntityProperty.PropertyType, sharedProperty.TResponseProperty.PropertyType);
-                var childBindings = CreateMemberBindings(sourceProperty, childProperties, currentLevel + 1);
+                var childBindings = CreateMemberBindings(childSourceProperty, childProperties, LoadChildren, CurrentLevel + 1);
                 if (childBindings.Any() == false)
                 {
                     continue;
@@ -138,7 +143,7 @@ namespace Lambda.Dynamic.SelectExpression
 
                 if (sharedProperty.TEntityProperty.IsNullableReferenceType())
                 {
-                    var nullCheck = Expression.Equal(sourceProperty, Expression.Constant(null));
+                    var nullCheck = Expression.Equal(childSourceProperty, Expression.Constant(null));
                     var memberInits = Expression.Condition(nullCheck, Expression.Default(sharedProperty.TResponseProperty.PropertyType), Expression.MemberInit(Expression.New(sharedProperty.TResponseProperty.PropertyType), childBindings));
                     var nullBinding = Expression.Bind(sharedProperty.TResponseProperty, memberInits);
                     bindings.Add(nullBinding);
