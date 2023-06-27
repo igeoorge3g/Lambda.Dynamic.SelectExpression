@@ -1,5 +1,6 @@
 ﻿using Lambda.Dynamic.SelectExpression.Attributes;
 using System.Collections;
+using System.Collections.Concurrent;
 using System.Linq.Expressions;
 using System.Reflection;
 
@@ -7,6 +8,7 @@ namespace Lambda.Dynamic.SelectExpression
 {
     public static class ProjectionHelper
     {
+        private static ConcurrentDictionary<(Type, Type, bool), LambdaExpression> cachedExpressions = new();
         private static readonly MethodInfo selectMethod = typeof(Enumerable).GetMethods().First(m => m.Name == "Select" && m.GetParameters().Length == 2);
         private static readonly Dictionary<(Type, Type), IEnumerable<MappingProperty>> sharedPropertiesCache = new();
         private static readonly HashSet<Type> primitiveTypes = new HashSet<Type>(
@@ -51,17 +53,21 @@ namespace Lambda.Dynamic.SelectExpression
 
         public static Expression<Func<TSource, TResult>> CreateProjection<TSource, TResult>(bool loadChildren = false)
         {
-
             var sourceType = typeof(TSource);
             var resultType = typeof(TResult);
-
+            if (cachedExpressions.TryGetValue((sourceType, resultType, loadChildren), out var cachedProjection))
+            {
+                return (Expression<Func<TSource, TResult>>)cachedProjection;
+            }
             var sourceParameter = Expression.Parameter(sourceType, "source");
 
             var resultProperties = GetSharedProperties(sourceType, resultType);
             var bindings = CreateMemberBindings(sourceParameter, resultProperties, loadChildren);
 
             var memberInit = Expression.MemberInit(Expression.New(resultType), bindings);
-            return Expression.Lambda<Func<TSource, TResult>>(memberInit, sourceParameter);
+            var projection = Expression.Lambda<Func<TSource, TResult>>(memberInit, sourceParameter);
+            cachedExpressions[(sourceType, resultType, loadChildren)] = projection;
+            return projection;
         }
 
         private static Expression CreateProjection(Type TSource, Type TResult, bool LoadChildren = false)
