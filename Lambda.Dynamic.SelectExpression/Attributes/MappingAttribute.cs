@@ -3,9 +3,12 @@
     public class MappingAttribute : Attribute
     {
         public readonly string RelatedObject;
-        public MappingAttribute(string relatedObject)
+        public readonly string? RelatedProperty;
+
+        public MappingAttribute(string relatedObject, string? relatedProperty = null)
         {
             RelatedObject = relatedObject;
+            RelatedProperty = relatedProperty;
         }
     }
 }

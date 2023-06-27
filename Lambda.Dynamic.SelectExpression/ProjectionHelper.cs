@@ -32,16 +32,16 @@ namespace Lambda.Dynamic.SelectExpression
                 var TResponseProperties = TResponseType.GetProperties();
 
                 properties = TResponseProperties
-                    .Where(e => TEntityProperties.Any(a => a.Name == e.Name))
+                    .Where(e => TEntityProperties.Any(a => a.Name == e.Name || a.HasAttribute<MappingAttribute>()))
                     .Select(e =>
                     {
+                        if (e.HasAttribute<MappingAttribute>())
+                        {
+                            var mappingAttribute = e.GetCustomAttribute<MappingAttribute>()!;
+                            return new MappingProperty(e, TEntityType.GetProperty(mappingAttribute.RelatedObject)!, mappingAttribute);
+                        }
                         return new MappingProperty(e, TEntityType.GetProperty(e.Name)!);
-                    }).Union(TResponseProperties
-                    .Where(e => e.HasAttribute<MappingAttribute>())
-                    .Select(e =>
-                    {
-                        return new MappingProperty(e, TEntityType.GetProperty(e.GetCustomAttribute<MappingAttribute>()!.RelatedObject)!, true);
-                    }));
+                    });
 
                 sharedPropertiesCache[key] = properties;
             }
@@ -54,7 +54,6 @@ namespace Lambda.Dynamic.SelectExpression
 
             var sourceType = typeof(TSource);
             var resultType = typeof(TResult);
-            //Debug.WriteLine($"CreateProjection<{sourceType.Name}, {resultType.Name}>");
 
             var sourceParameter = Expression.Parameter(sourceType, "source");
 
@@ -83,14 +82,13 @@ namespace Lambda.Dynamic.SelectExpression
             foreach (var sharedProperty in properties)
             {
 
-
-                if (sharedProperty.IsMapping)
+                if (sharedProperty.IsMapping is not null)
                 {
                     var nestedSourceProperty = Expression.Property(sourceParameter, sharedProperty.TEntityProperty.Name);
-                    var nestedChildProperty = sharedProperty.TEntityProperty.PropertyType.GetProperty(sharedProperty.TResponseProperty.Name);
+                    var nestedChildProperty = sharedProperty.TEntityProperty.PropertyType.GetProperty(sharedProperty.IsMapping.RelatedProperty ?? sharedProperty.TResponseProperty.Name);
                     var nestedChildPropertyAccess = Expression.Property(nestedSourceProperty, nestedChildProperty);
-                    var memberAssignment = Expression.Bind(sharedProperty.TResponseProperty, nestedChildPropertyAccess);
-                    bindings.Add(memberAssignment);
+                    var nestedChildMemberAssignment = Expression.Bind(sharedProperty.TResponseProperty, nestedChildPropertyAccess);
+                    bindings.Add(nestedChildMemberAssignment);
                     continue;
                 }
 
